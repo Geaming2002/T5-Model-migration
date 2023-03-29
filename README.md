@@ -55,7 +55,7 @@
 
 T5所有模块的测试代码见: [./code/t5_test.py](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/t5_test.py)
 
--> 以`T5Attention`模块为例：[模块对齐.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/%E6%A8%A1%E5%9D%97%E5%AF%B9%E9%BD%90.ipynb)
+-> 以`T5Attention`模块为例：[模块对齐.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/T5Attention%E6%A8%A1%E5%9D%97%E5%AF%B9%E9%BD%90.ipynb)
 
 - 加载模块
 
@@ -164,6 +164,8 @@ T5所有模块的测试代码见: [./code/t5_test.py](https://github.com/Geaming
 
 ## 整网对齐
 
-与模块对齐类似，将整网视为一个“大”模块即可。
+与模块对齐过程类似，将整网视为一个“大”模块即可。
 
 ## 预训练参数加载对齐
+
+### 
