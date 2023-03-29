@@ -6,6 +6,23 @@
 
 > 迁移代码地址：[./code/mindnlp/models/t5/t5.py](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/mindnlp/models/t5/t5.py)
 
+<!-- TOC -->
+
+- [T5-Model-migration](#t5-model-migration)
+- [模型迁移](#%E6%A8%A1%E5%9E%8B%E8%BF%81%E7%A7%BB)
+- [模型对齐](#%E6%A8%A1%E5%9E%8B%E5%AF%B9%E9%BD%90)
+    - [模块对齐](#%E6%A8%A1%E5%9D%97%E5%AF%B9%E9%BD%90)
+    - [整网对齐](#%E6%95%B4%E7%BD%91%E5%AF%B9%E9%BD%90)
+    - [预训练参数加载对齐](#%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E5%8A%A0%E8%BD%BD%E5%AF%B9%E9%BD%90)
+        - [预训练参数下载及转换为ckpt](#%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E4%B8%8B%E8%BD%BD%E5%8F%8A%E8%BD%AC%E6%8D%A2%E4%B8%BAckpt)
+            - [下载](#%E4%B8%8B%E8%BD%BD)
+            - [转换](#%E8%BD%AC%E6%8D%A2)
+        - [预训练参数加载并对齐](#%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E5%8A%A0%E8%BD%BD%E5%B9%B6%E5%AF%B9%E9%BD%90)
+            - [_1](#_1)
+            - [_2](#_2)
+        - [t5-small参数名称对比](#t5-small%E5%8F%82%E6%95%B0%E5%90%8D%E7%A7%B0%E5%AF%B9%E6%AF%94)
+
+<!-- /TOC -->
 
 # 模型迁移
 
@@ -213,7 +230,7 @@ wget https://huggingface.co/t5-small/resolve/main/pytorch_model.bin -P /home/dat
 
 #### 转换
 
--> [T5Model预训练参数转换.ipynb]()
+-> [T5Model预训练参数转换.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/T5Model%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E8%BD%AC%E6%8D%A2.ipynb)
 
 下载好相关文件后，因为使用的深度学习框架的差异，我们需要将pytorch_model.bin转换为ckpt格式。在这里以T5-small为例。首先我们将下载好的文件加载进原T5Model。然后分别打印出两个T5Model模型的参数名称并进行对比，查看哪些参数名称需要进行替换。文末附有t5-small的参数名称对比表格。
 
@@ -319,9 +336,9 @@ def torch_to_mindspore(pth_file, size:str=None):
 
 ### 预训练参数加载并对齐
 
-#### t5-small/t5-base/t5-large/t5-3b
+#### _1
 
--> [T5Model预训练参数加载对齐_1.ipynb]()
+-> [T5Model预训练参数加载对齐_1.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/T5Model%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E5%8A%A0%E8%BD%BD%E5%AF%B9%E9%BD%90_1.ipynb)
 
 主要代码如下：
 
@@ -354,9 +371,9 @@ ms_model.set_train(False)
 
 !!!注意打印`param_not_load`，其会返回两个列表。第一个是模型中还未load的参数，第二个是参数文件中为load的参数。这里提示`decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.embedding_table`未被load，但是经确认模型结构中不存在这一层参数，且在原代码中是被放进`_keys_to_ignore_on_load_unexpected`中的，无事发生again。
 
-#### t5-3b/t5-11b
+#### _2
 
-[T5Model预训练参数加载对齐_2.ipynb]()
+[T5Model预训练参数加载对齐_2.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/T5Model%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E5%8A%A0%E8%BD%BD%E5%AF%B9%E9%BD%90_2.ipynb)
 
 当模型参数量过大，可能导致使用前一种方法也无法使得精度对齐，调整loss至5e-3也无果，这里提供另一种方式进行精度对齐。
 
