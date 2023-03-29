@@ -213,6 +213,8 @@ wget https://huggingface.co/t5-small/resolve/main/pytorch_model.bin -P /home/dat
 
 #### 转换
 
+-> [T5Model预训练参数转换.ipynb]()
+
 下载好相关文件后，因为使用的深度学习框架的差异，我们需要将pytorch_model.bin转换为ckpt格式。在这里以T5-small为例。首先我们将下载好的文件加载进原T5Model。然后分别打印出两个T5Model模型的参数名称并进行对比，查看哪些参数名称需要进行替换。文末附有t5-small的参数名称对比表格。
 
 指定相关文件路径
@@ -316,6 +318,67 @@ def torch_to_mindspore(pth_file, size:str=None):
 ```
 
 ### 预训练参数加载并对齐
+
+#### t5-small/t5-base/t5-large/t5-3b
+
+-> [T5Model预训练参数加载对齐_1.ipynb]()
+
+主要代码如下：
+
+```python
+size = 't5-small'
+
+config_path = f"{path[size]}/{size}_config.json"
+with open(config_path, encoding='utf-8') as config:
+    config = json.load(config)
+# init config
+pt_config = pt.T5Config(**config)
+ms_config = m.T5Config(**config)
+
+# init model
+pt_model = pt.T5Model(pt_config)
+ms_model = m.T5Model(ms_config)
+
+# load parameters
+pt_dict = torch.load(f"{path[size]}/pytorch_model.bin")
+pt_model.load_state_dict(pt_dict, False) 
+
+ms_dict = mindspore.load_checkpoint(f"{path[size]}/{size}_model.ckpt")
+param_not_load = mindspore.load_param_into_net(ms_model, ms_dict)
+print(f"Param_not_load:{param_not_load}")
+
+# set eval mode
+pt_model.eval()
+ms_model.set_train(False)
+```
+
+!!!注意打印`param_not_load`，其会返回两个列表。第一个是模型中还未load的参数，第二个是参数文件中为load的参数。这里提示`decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.embedding_table`未被load，但是经确认模型结构中不存在这一层参数，且在原代码中是被放进`_keys_to_ignore_on_load_unexpected`中的，无事发生again。
+
+#### t5-3b/t5-11b
+
+[T5Model预训练参数加载对齐_2.ipynb]()
+
+当模型参数量过大，可能导致使用前一种方法也无法使得精度对齐，调整loss至5e-3也无果，这里提供另一种方式进行精度对齐。
+
+即引入tokenizer对输入进行处理，随机生成`decoder_input_ids`，输入进模型获得输出。
+
+与前一种方法的差异在于prepare data
+
+```python
+# tokenizer
+tokenizer = pt.T5Tokenizer.from_pretrained(size)
+
+# prepare data
+input_ids = "translate English to German: With T5, we propose reframing all NLP tasks into a unified text-to-text-format where the input and output are always text strings, in contrast to BERT-style models that can only output either a class label or a span of the input. Our text-to-text framework allows us to use the same model, loss function, and hyperparameters on any NLP task."
+decoder_input_ids = [[np.random.randint(0,1000)]]
+
+pt_input_ids = tokenizer([input_ids], return_tensors="pt").input_ids
+pt_decoder_input_ids = torch.tensor(decoder_input_ids, dtype=torch.long)
+ms_input_ids = mindspore.Tensor(pt_input_ids.detach().numpy()).to(mindspore.int64)
+ms_decoder_input_ids = mindspore.Tensor(pt_decoder_input_ids.detach().numpy()).to(mindspore.int64)
+```
+
+
 
 ### t5-small参数名称对比
 
