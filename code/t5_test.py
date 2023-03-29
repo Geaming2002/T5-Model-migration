@@ -154,8 +154,8 @@ class T5_test():
         # init model
         ms_model = m.T5Attention(ms_config, True)
         pt_model = pt.T5Attention(pt_config, True)
-        pt_params = pt_model.state_dict()
         # load parameters
+        pt_params = pt_model.state_dict()
         for key, param in ms_model.parameters_and_names():
             if 'embedding_table' in key:
                 key = key.replace('embedding_table', 'weight')

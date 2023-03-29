@@ -61,7 +61,12 @@ T5所有模块的测试代码见: [./code/t5_test.py](https://github.com/Geaming
 
     - init config：先初始化所有需要在模块传入的参数，且保证一致。在这里即为`T5Config`。
 
-    - init model：初始化`T5Attention`模块，
+    - init model：初始化`T5Attention`模块
+
+        ```python
+        ms_model = m.T5Attention(ms_config, True)
+        pt_model = pt.T5Attention(pt_config, True)
+        ```
 
         在这里设置`has_relative_attention_bias=True`，是为了便于展示模型参数迁移中可能会遇到的不同模型参数名称不一致的情况。具体设置见模块不同设置。
 
