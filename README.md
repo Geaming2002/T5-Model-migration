@@ -4,7 +4,8 @@
 
 > 参考代码地址：https://github.com/huggingface/transformers/blob/v4.26.1/src/transformers/models/t5/modeling_t5.py
 
-> 迁移代码地址：[./mindnlp/models/t5/t5.py](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/mindnlp/models/t5/t5.py)
+> 迁移代码地址：[./code/mindnlp/models/t5/t5.py](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/mindnlp/models/t5/t5.py)
+
 
 # 模型迁移
 
@@ -52,6 +53,8 @@
 
 ## 模块对齐
 
+T5所有模块的测试代码见: [./code/t5_test.py](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/t5_test.py)
+
 -> 以`T5Attention`模块为例：[模块对齐.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/%E6%A8%A1%E5%9D%97%E5%AF%B9%E9%BD%90.ipynb)
 
 - 加载模块
@@ -61,8 +64,6 @@
     - init model：初始化`T5Attention`模块，
 
         在这里设置`has_relative_attention_bias=True`，是为了便于展示模型参数迁移中可能会遇到的不同模型参数名称不一致的情况。具体设置见模块不同设置。
-
-    - set eval mode：为了避免`dropout`等问题导致精度差异过大，在这里需要设置模型为`eval`。
 
     - load parameters：因为不同框架的参数初始化方式不一样，故在初始化完成之后需要进行权重迁移。因为对齐的目标是`pt_model`，所以我们需要把`pt_model`中的权重迁移至`ms_model`。
 
@@ -84,6 +85,14 @@
             if 'embedding_table' in key:
                 key = key.replace('embedding_table', 'weight') # different name in two models
             param.set_data(mindspore.Tensor(pt_params.get(key).detach().numpy()))
+        ```
+
+    - set eval mode：为了避免`dropout`等问题导致精度差异过大，在这里需要设置模型为`eval`。
+
+        ```python
+        # set eval mode
+        ms_model.set_train(False)
+        pt_model.eval()
         ```
 
 - 准备数据
@@ -135,6 +144,20 @@
             print(f"{type(o1)}-{type(o2)}:{o1==o2}")
     ```
 
+    使用`judge`进行对齐，输出如下：
+
+    ```python
+    judge(ms_out, pt_out)
+    ```
+
+    ```plain text
+    ---True
+    <class 'NoneType'>-<class 'NoneType'>:True
+    ---True
+    ```
+
 ## 整网对齐
+
+与模块对齐类似，将整网视为一个“大”模块即可。
 
 ## 预训练参数加载对齐
