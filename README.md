@@ -168,4 +168,291 @@ T5所有模块的测试代码见: [./code/t5_test.py](https://github.com/Geaming
 
 ## 预训练参数加载对齐
 
-### 
+T5预训练模型参数大小分为：
+
+|  T5Model   | pytorch_model.bin  |
+|  ----  | ----  |
+| [small](https://huggingface.co/t5-small/tree/main)  | 242MB |
+| [base](https://huggingface.co/t5-base/tree/main)  | 892MB |
+| [large](https://huggingface.co/t5-large/tree/main)  | 2.95GB |
+| [3b](https://huggingface.co/t5-3b/tree/main)  | 11.4GB |
+| [11b](https://huggingface.co/t5-11b/tree/main)  | 45.2GB |
+
+### 预训练参数下载及转换为ckpt
+
+#### 下载
+
+T5预训练模型参数及文件可以从huggingface官方直接下载，huggingface也提供了`hf_hub_url`能够直接输出文件的下载链接。因为使用的是Ubuntu，所有可以直接用`wget`命令进行下载。
+
+```python
+from huggingface_hub import hf_hub_url
+
+path = "/home/data/T5ckpt"
+
+def download_script(size:str):
+    """print wget to download files of a pretrained model"""
+    print(f"wget {hf_hub_url(repo_id=size, filename='config.json')} -P {path}/{size}")
+    print(f"wget {hf_hub_url(repo_id=size, filename='tokenizer.json')} -P {path}/{size}")
+    print(f"wget {hf_hub_url(repo_id=size, filename='pytorch_model.bin')} -P {path}/{size}")
+```
+```python
+download_script("t5-small")
+```
+```plain text
+wget https://huggingface.co/t5-small/resolve/main/config.json -P /home/data/T5ckpt/t5-small
+wget https://huggingface.co/t5-small/resolve/main/tokenizer.json -P /home/data/T5ckpt/t5-small
+wget https://huggingface.co/t5-small/resolve/main/pytorch_model.bin -P /home/data/T5ckpt/t5-small
+```
+
+下载完成后，因为需要测试不同大小的预训练模型，故对于一些文件进行改名。最后t5-small的模型文件如下：
+
+- t5-small
+    - pytorch_model.bin
+    - t5-small_config.json
+    - t5-small_tokenizer.json (暂时未涉及)
+
+#### 转换
+
+下载好相关文件后，因为使用的深度学习框架的差异，我们需要将pytorch_model.bin转换为ckpt格式。在这里以T5-small为例。首先我们将下载好的文件加载进原T5Model。然后分别打印出两个T5Model模型的参数名称并进行对比，查看哪些参数名称需要进行替换。文末附有t5-small的参数名称对比表格。
+
+指定相关文件路径
+
+```python
+path = r"/home/data/T5ckpt/t5-small"
+config_path = f"{path}/t5-small_config.json"
+pytorch_model_path = f"{path}/pytorch_model.bin"
+```
+
+初始化`transformers`的T5model并加载预训练参数。
+
+```python
+# init config
+import json
+with open(config_path, encoding='utf-8') as config:
+    config = json.load(config)
+
+pt_config = pt.T5Config(**config)
+pt_dict = torch.load(pytorch_model_path)
+pt_model = pt.T5Model(pt_config)
+pt_model.load_state_dict(pt_dict, False)
+```
+
+在`transformers`的T5Model加载`pytorch_model.bin`时，有以下信息：
+
+`_IncompatibleKeys(missing_keys=['encoder.embed_tokens.weight', 'decoder.embed_tokens.weight'], unexpected_keys=['decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.weight'])`
+
+可以在`transformers`的T5Model源码中查看到下列信息，其实在T5Model中`encoder.embed_tokens.weight`和`decoder.embed_tokens.weight`都是直接使用的`shared.weight`，故无事发生。
+
+```python
+_keys_to_ignore_on_load_missing = [
+    r"encoder.embed_tokens.weight",
+    r"decoder.embed_tokens.weight",
+]
+_keys_to_ignore_on_load_unexpected = [
+    r"decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.weight",
+]
+```
+
+加载完预训练参数后，打印相关模型参数，同时我们也需要打印`mindnlp`中的T5Model相关模型参数。
+
+```python
+# print pt_model parameters' name
+pt_params = pt_model.state_dict()
+for key in pt_params.keys():
+    print(key)
+```
+
+!!!需要注意的是，在某些情况下`key`和`param.name`不一定一致，尤其是存在某些参数属于共享参数时，这时以`param.name`为准。因为`mindspore.load_param_into_net`是以`param.name`作为键去寻找参数。
+
+```python
+# init config
+ms_config = m.T5Config(**config)
+ms_model = m.T5Model(ms_config)
+# print ms_model parameters' name
+for key, param in ms_model.parameters_and_names():
+    print(param.name)
+```
+
+从文末的表格对比可知，在此模型中，我们只需要替换：
+
+- `shared.weight`->`decoder.embed_tokens.embedding_table`
+- `relative_attention_bias.weight`->`relative_attention_bias.embedding_table`
+
+转换函数如下：
+
+```python
+import logging
+def torch_to_mindspore(pth_file, size:str=None):
+    try:
+        import torch
+    except:
+        raise ImportError(f"'import torch' failed, please install torch by "
+                          f"`pip install torch` or instructions from 'https://pytorch.org'")
+
+    size = "mindspore" if not size else size # rename ckpt
+
+    from mindspore import Tensor
+    from mindspore.train.serialization import save_checkpoint
+
+    logging.info('Starting checkpoint conversion.')
+    ms_ckpt = []
+    state_dict = torch.load(pth_file, map_location=torch.device('cpu'))
+
+    for k, v in state_dict.items():
+        if 'shared.weight' in k:
+            k = k.replace('shared.weight', 'decoder.embed_tokens.embedding_table')
+        if 'relative_attention_bias.weight' in k:
+            k = k.replace('relative_attention_bias.weight', 'relative_attention_bias.embedding_table')
+        ms_ckpt.append({'name': k, 'data': Tensor(v.numpy())})
+
+    ms_ckpt_path = pth_file.replace('.bin','.ckpt')
+    ms_ckpt_path = ms_ckpt_path.replace('pytorch',size)
+    try:
+        save_checkpoint(ms_ckpt, ms_ckpt_path)
+    except:
+        raise RuntimeError(f'Save checkpoint to {ms_ckpt_path} failed, please checkout the path.')
+
+    return ms_ckpt_path
+```
+
+### 预训练参数加载并对齐
+
+### t5-small参数名称对比
+
+|transformers|mindnlp|一致|
+|---|----|-----|
+|shared.weight|decoder.embed_tokens.embedding_table|False
+|encoder.embed_tokens.weight||False
+|encoder.block.0.layer.0.SelfAttention.q.weight|encoder.block.0.layer.0.SelfAttention.q.weight|True
+|encoder.block.0.layer.0.SelfAttention.k.weight|encoder.block.0.layer.0.SelfAttention.k.weight|True
+|encoder.block.0.layer.0.SelfAttention.v.weight|encoder.block.0.layer.0.SelfAttention.v.weight|True
+|encoder.block.0.layer.0.SelfAttention.o.weight|encoder.block.0.layer.0.SelfAttention.o.weight|True
+|encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight|encoder.block.0.layer.0.SelfAttention.relative_attention_bias.embedding_table|False
+|encoder.block.0.layer.0.layer_norm.weight|encoder.block.0.layer.0.layer_norm.weight|True
+|encoder.block.0.layer.1.DenseReluDense.wi.weight|encoder.block.0.layer.1.DenseReluDense.wi.weight|True
+|encoder.block.0.layer.1.DenseReluDense.wo.weight|encoder.block.0.layer.1.DenseReluDense.wo.weight|True
+|encoder.block.0.layer.1.layer_norm.weight|encoder.block.0.layer.1.layer_norm.weight|True
+|encoder.block.1.layer.0.SelfAttention.q.weight|encoder.block.1.layer.0.SelfAttention.q.weight|True
+|encoder.block.1.layer.0.SelfAttention.k.weight|encoder.block.1.layer.0.SelfAttention.k.weight|True
+|encoder.block.1.layer.0.SelfAttention.v.weight|encoder.block.1.layer.0.SelfAttention.v.weight|True
+|encoder.block.1.layer.0.SelfAttention.o.weight|encoder.block.1.layer.0.SelfAttention.o.weight|True
+|encoder.block.1.layer.0.layer_norm.weight|encoder.block.1.layer.0.layer_norm.weight|True
+|encoder.block.1.layer.1.DenseReluDense.wi.weight|encoder.block.1.layer.1.DenseReluDense.wi.weight|True
+|encoder.block.1.layer.1.DenseReluDense.wo.weight|encoder.block.1.layer.1.DenseReluDense.wo.weight|True
+|encoder.block.1.layer.1.layer_norm.weight|encoder.block.1.layer.1.layer_norm.weight|True
+|encoder.block.2.layer.0.SelfAttention.q.weight|encoder.block.2.layer.0.SelfAttention.q.weight|True
+|encoder.block.2.layer.0.SelfAttention.k.weight|encoder.block.2.layer.0.SelfAttention.k.weight|True
+|encoder.block.2.layer.0.SelfAttention.v.weight|encoder.block.2.layer.0.SelfAttention.v.weight|True
+|encoder.block.2.layer.0.SelfAttention.o.weight|encoder.block.2.layer.0.SelfAttention.o.weight|True
+|encoder.block.2.layer.0.layer_norm.weight|encoder.block.2.layer.0.layer_norm.weight|True
+|encoder.block.2.layer.1.DenseReluDense.wi.weight|encoder.block.2.layer.1.DenseReluDense.wi.weight|True
+|encoder.block.2.layer.1.DenseReluDense.wo.weight|encoder.block.2.layer.1.DenseReluDense.wo.weight|True
+|encoder.block.2.layer.1.layer_norm.weight|encoder.block.2.layer.1.layer_norm.weight|True
+|encoder.block.3.layer.0.SelfAttention.q.weight|encoder.block.3.layer.0.SelfAttention.q.weight|True
+|encoder.block.3.layer.0.SelfAttention.k.weight|encoder.block.3.layer.0.SelfAttention.k.weight|True
+|encoder.block.3.layer.0.SelfAttention.v.weight|encoder.block.3.layer.0.SelfAttention.v.weight|True
+|encoder.block.3.layer.0.SelfAttention.o.weight|encoder.block.3.layer.0.SelfAttention.o.weight|True
+|encoder.block.3.layer.0.layer_norm.weight|encoder.block.3.layer.0.layer_norm.weight|True
+|encoder.block.3.layer.1.DenseReluDense.wi.weight|encoder.block.3.layer.1.DenseReluDense.wi.weight|True
+|encoder.block.3.layer.1.DenseReluDense.wo.weight|encoder.block.3.layer.1.DenseReluDense.wo.weight|True
+|encoder.block.3.layer.1.layer_norm.weight|encoder.block.3.layer.1.layer_norm.weight|True
+|encoder.block.4.layer.0.SelfAttention.q.weight|encoder.block.4.layer.0.SelfAttention.q.weight|True
+|encoder.block.4.layer.0.SelfAttention.k.weight|encoder.block.4.layer.0.SelfAttention.k.weight|True
+|encoder.block.4.layer.0.SelfAttention.v.weight|encoder.block.4.layer.0.SelfAttention.v.weight|True
+|encoder.block.4.layer.0.SelfAttention.o.weight|encoder.block.4.layer.0.SelfAttention.o.weight|True
+|encoder.block.4.layer.0.layer_norm.weight|encoder.block.4.layer.0.layer_norm.weight|True
+|encoder.block.4.layer.1.DenseReluDense.wi.weight|encoder.block.4.layer.1.DenseReluDense.wi.weight|True
+|encoder.block.4.layer.1.DenseReluDense.wo.weight|encoder.block.4.layer.1.DenseReluDense.wo.weight|True
+|encoder.block.4.layer.1.layer_norm.weight|encoder.block.4.layer.1.layer_norm.weight|True
+|encoder.block.5.layer.0.SelfAttention.q.weight|encoder.block.5.layer.0.SelfAttention.q.weight|True
+|encoder.block.5.layer.0.SelfAttention.k.weight|encoder.block.5.layer.0.SelfAttention.k.weight|True
+|encoder.block.5.layer.0.SelfAttention.v.weight|encoder.block.5.layer.0.SelfAttention.v.weight|True
+|encoder.block.5.layer.0.SelfAttention.o.weight|encoder.block.5.layer.0.SelfAttention.o.weight|True
+|encoder.block.5.layer.0.layer_norm.weight|encoder.block.5.layer.0.layer_norm.weight|True
+|encoder.block.5.layer.1.DenseReluDense.wi.weight|encoder.block.5.layer.1.DenseReluDense.wi.weight|True
+|encoder.block.5.layer.1.DenseReluDense.wo.weight|encoder.block.5.layer.1.DenseReluDense.wo.weight|True
+|encoder.block.5.layer.1.layer_norm.weight|encoder.block.5.layer.1.layer_norm.weight|True
+|encoder.final_layer_norm.weight|encoder.final_layer_norm.weight|True
+|decoder.embed_tokens.weight||False
+|decoder.block.0.layer.0.SelfAttention.q.weight|decoder.block.0.layer.0.SelfAttention.q.weight|True
+|decoder.block.0.layer.0.SelfAttention.k.weight|decoder.block.0.layer.0.SelfAttention.k.weight|True
+|decoder.block.0.layer.0.SelfAttention.v.weight|decoder.block.0.layer.0.SelfAttention.v.weight|True
+|decoder.block.0.layer.0.SelfAttention.o.weight|decoder.block.0.layer.0.SelfAttention.o.weight|True
+|decoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight|decoder.block.0.layer.0.SelfAttention.relative_attention_bias.embedding_table|False
+|decoder.block.0.layer.0.layer_norm.weight|decoder.block.0.layer.0.layer_norm.weight|True
+|decoder.block.0.layer.1.EncDecAttention.q.weight|decoder.block.0.layer.1.EncDecAttention.q.weight|True
+|decoder.block.0.layer.1.EncDecAttention.k.weight|decoder.block.0.layer.1.EncDecAttention.k.weight|True
+|decoder.block.0.layer.1.EncDecAttention.v.weight|decoder.block.0.layer.1.EncDecAttention.v.weight|True
+|decoder.block.0.layer.1.EncDecAttention.o.weight|decoder.block.0.layer.1.EncDecAttention.o.weight|True
+|decoder.block.0.layer.1.layer_norm.weight|decoder.block.0.layer.1.layer_norm.weight|True
+|decoder.block.0.layer.2.DenseReluDense.wi.weight|decoder.block.0.layer.2.DenseReluDense.wi.weight|True
+|decoder.block.0.layer.2.DenseReluDense.wo.weight|decoder.block.0.layer.2.DenseReluDense.wo.weight|True
+|decoder.block.0.layer.2.layer_norm.weight|decoder.block.0.layer.2.layer_norm.weight|True
+|decoder.block.1.layer.0.SelfAttention.q.weight|decoder.block.1.layer.0.SelfAttention.q.weight|True
+|decoder.block.1.layer.0.SelfAttention.k.weight|decoder.block.1.layer.0.SelfAttention.k.weight|True
+|decoder.block.1.layer.0.SelfAttention.v.weight|decoder.block.1.layer.0.SelfAttention.v.weight|True
+|decoder.block.1.layer.0.SelfAttention.o.weight|decoder.block.1.layer.0.SelfAttention.o.weight|True
+|decoder.block.1.layer.0.layer_norm.weight|decoder.block.1.layer.0.layer_norm.weight|True
+|decoder.block.1.layer.1.EncDecAttention.q.weight|decoder.block.1.layer.1.EncDecAttention.q.weight|True
+|decoder.block.1.layer.1.EncDecAttention.k.weight|decoder.block.1.layer.1.EncDecAttention.k.weight|True
+|decoder.block.1.layer.1.EncDecAttention.v.weight|decoder.block.1.layer.1.EncDecAttention.v.weight|True
+|decoder.block.1.layer.1.EncDecAttention.o.weight|decoder.block.1.layer.1.EncDecAttention.o.weight|True
+|decoder.block.1.layer.1.layer_norm.weight|decoder.block.1.layer.1.layer_norm.weight|True
+|decoder.block.1.layer.2.DenseReluDense.wi.weight|decoder.block.1.layer.2.DenseReluDense.wi.weight|True
+|decoder.block.1.layer.2.DenseReluDense.wo.weight|decoder.block.1.layer.2.DenseReluDense.wo.weight|True
+|decoder.block.1.layer.2.layer_norm.weight|decoder.block.1.layer.2.layer_norm.weight|True
+|decoder.block.2.layer.0.SelfAttention.q.weight|decoder.block.2.layer.0.SelfAttention.q.weight|True
+|decoder.block.2.layer.0.SelfAttention.k.weight|decoder.block.2.layer.0.SelfAttention.k.weight|True
+|decoder.block.2.layer.0.SelfAttention.v.weight|decoder.block.2.layer.0.SelfAttention.v.weight|True
+|decoder.block.2.layer.0.SelfAttention.o.weight|decoder.block.2.layer.0.SelfAttention.o.weight|True
+|decoder.block.2.layer.0.layer_norm.weight|decoder.block.2.layer.0.layer_norm.weight|True
+|decoder.block.2.layer.1.EncDecAttention.q.weight|decoder.block.2.layer.1.EncDecAttention.q.weight|True
+|decoder.block.2.layer.1.EncDecAttention.k.weight|decoder.block.2.layer.1.EncDecAttention.k.weight|True
+|decoder.block.2.layer.1.EncDecAttention.v.weight|decoder.block.2.layer.1.EncDecAttention.v.weight|True
+|decoder.block.2.layer.1.EncDecAttention.o.weight|decoder.block.2.layer.1.EncDecAttention.o.weight|True
+|decoder.block.2.layer.1.layer_norm.weight|decoder.block.2.layer.1.layer_norm.weight|True
+|decoder.block.2.layer.2.DenseReluDense.wi.weight|decoder.block.2.layer.2.DenseReluDense.wi.weight|True
+|decoder.block.2.layer.2.DenseReluDense.wo.weight|decoder.block.2.layer.2.DenseReluDense.wo.weight|True
+|decoder.block.2.layer.2.layer_norm.weight|decoder.block.2.layer.2.layer_norm.weight|True
+|decoder.block.3.layer.0.SelfAttention.q.weight|decoder.block.3.layer.0.SelfAttention.q.weight|True
+|decoder.block.3.layer.0.SelfAttention.k.weight|decoder.block.3.layer.0.SelfAttention.k.weight|True
+|decoder.block.3.layer.0.SelfAttention.v.weight|decoder.block.3.layer.0.SelfAttention.v.weight|True
+|decoder.block.3.layer.0.SelfAttention.o.weight|decoder.block.3.layer.0.SelfAttention.o.weight|True
+|decoder.block.3.layer.0.layer_norm.weight|decoder.block.3.layer.0.layer_norm.weight|True
+|decoder.block.3.layer.1.EncDecAttention.q.weight|decoder.block.3.layer.1.EncDecAttention.q.weight|True
+|decoder.block.3.layer.1.EncDecAttention.k.weight|decoder.block.3.layer.1.EncDecAttention.k.weight|True
+|decoder.block.3.layer.1.EncDecAttention.v.weight|decoder.block.3.layer.1.EncDecAttention.v.weight|True
+|decoder.block.3.layer.1.EncDecAttention.o.weight|decoder.block.3.layer.1.EncDecAttention.o.weight|True
+|decoder.block.3.layer.1.layer_norm.weight|decoder.block.3.layer.1.layer_norm.weight|True
+|decoder.block.3.layer.2.DenseReluDense.wi.weight|decoder.block.3.layer.2.DenseReluDense.wi.weight|True
+|decoder.block.3.layer.2.DenseReluDense.wo.weight|decoder.block.3.layer.2.DenseReluDense.wo.weight|True
+|decoder.block.3.layer.2.layer_norm.weight|decoder.block.3.layer.2.layer_norm.weight|True
+|decoder.block.4.layer.0.SelfAttention.q.weight|decoder.block.4.layer.0.SelfAttention.q.weight|True
+|decoder.block.4.layer.0.SelfAttention.k.weight|decoder.block.4.layer.0.SelfAttention.k.weight|True
+|decoder.block.4.layer.0.SelfAttention.v.weight|decoder.block.4.layer.0.SelfAttention.v.weight|True
+|decoder.block.4.layer.0.SelfAttention.o.weight|decoder.block.4.layer.0.SelfAttention.o.weight|True
+|decoder.block.4.layer.0.layer_norm.weight|decoder.block.4.layer.0.layer_norm.weight|True
+|decoder.block.4.layer.1.EncDecAttention.q.weight|decoder.block.4.layer.1.EncDecAttention.q.weight|True
+|decoder.block.4.layer.1.EncDecAttention.k.weight|decoder.block.4.layer.1.EncDecAttention.k.weight|True
+|decoder.block.4.layer.1.EncDecAttention.v.weight|decoder.block.4.layer.1.EncDecAttention.v.weight|True
+|decoder.block.4.layer.1.EncDecAttention.o.weight|decoder.block.4.layer.1.EncDecAttention.o.weight|True
+|decoder.block.4.layer.1.layer_norm.weight|decoder.block.4.layer.1.layer_norm.weight|True
+|decoder.block.4.layer.2.DenseReluDense.wi.weight|decoder.block.4.layer.2.DenseReluDense.wi.weight|True
+|decoder.block.4.layer.2.DenseReluDense.wo.weight|decoder.block.4.layer.2.DenseReluDense.wo.weight|True
+|decoder.block.4.layer.2.layer_norm.weight|decoder.block.4.layer.2.layer_norm.weight|True
+|decoder.block.5.layer.0.SelfAttention.q.weight|decoder.block.5.layer.0.SelfAttention.q.weight|True
+|decoder.block.5.layer.0.SelfAttention.k.weight|decoder.block.5.layer.0.SelfAttention.k.weight|True
+|decoder.block.5.layer.0.SelfAttention.v.weight|decoder.block.5.layer.0.SelfAttention.v.weight|True
+|decoder.block.5.layer.0.SelfAttention.o.weight|decoder.block.5.layer.0.SelfAttention.o.weight|True
+|decoder.block.5.layer.0.layer_norm.weight|decoder.block.5.layer.0.layer_norm.weight|True
+|decoder.block.5.layer.1.EncDecAttention.q.weight|decoder.block.5.layer.1.EncDecAttention.q.weight|True
+|decoder.block.5.layer.1.EncDecAttention.k.weight|decoder.block.5.layer.1.EncDecAttention.k.weight|True
+|decoder.block.5.layer.1.EncDecAttention.v.weight|decoder.block.5.layer.1.EncDecAttention.v.weight|True
+|decoder.block.5.layer.1.EncDecAttention.o.weight|decoder.block.5.layer.1.EncDecAttention.o.weight|True
+|decoder.block.5.layer.1.layer_norm.weight|decoder.block.5.layer.1.layer_norm.weight|True
+|decoder.block.5.layer.2.DenseReluDense.wi.weight|decoder.block.5.layer.2.DenseReluDense.wi.weight|True
+|decoder.block.5.layer.2.DenseReluDense.wo.weight|decoder.block.5.layer.2.DenseReluDense.wo.weight|True
+|decoder.block.5.layer.2.layer_norm.weight|decoder.block.5.layer.2.layer_norm.weight|True
+|decoder.final_layer_norm.weight|decoder.final_layer_norm.weight|True
+
+
