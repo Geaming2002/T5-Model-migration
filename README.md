@@ -547,11 +547,11 @@ ms_decoder_input_ids = mindspore.Tensor(pt_decoder_input_ids.detach().numpy()).t
 
 最终提交仓库代码文件：
 
-[\_\_init\_\_.py]()
+[\_\_init\_\_.py](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/mindnlp/transforms/__init__.py)
 
-[t5_tokenizer.py]()
+[t5_tokenizer.py](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/mindnlp/transforms/tokenizers/t5_tokenizer.py)
 
-[test_t5_tokenizer.py]()
+[test_t5_tokenizer.py](#ut%E4%BB%A3%E7%A0%81)
 
 
 对于提供的预训练模型，往往会有其对应的tokenizer进行搭配使用。以T5模型为例总共有5种size，其中每种都有对应的tokenizer。通过上文的`download_script`我们可以获得各个模型对应的`tokenizer.json`的链接
