@@ -21,6 +21,10 @@
             - [_1](#_1)
             - [_2](#_2)
         - [t5-small参数名称对比](#t5-small%E5%8F%82%E6%95%B0%E5%90%8D%E7%A7%B0%E5%AF%B9%E6%AF%94)
+- [Tokenizer迁移](#tokenizer%E8%BF%81%E7%A7%BB)
+    - [基础迁移](#%E5%9F%BA%E7%A1%80%E8%BF%81%E7%A7%BB)
+    - [额外操作](#%E9%A2%9D%E5%A4%96%E6%93%8D%E4%BD%9C)
+    - [ut代码](#ut%E4%BB%A3%E7%A0%81)
 
 <!-- /TOC -->
 
@@ -535,4 +539,259 @@ ms_decoder_input_ids = mindspore.Tensor(pt_decoder_input_ids.detach().numpy()).t
 |decoder.block.5.layer.2.layer_norm.weight|decoder.block.5.layer.2.layer_norm.weight|True
 |decoder.final_layer_norm.weight|decoder.final_layer_norm.weight|True
 
+# Tokenizer迁移
 
+测试代码：
+
+[T5Tokenizer.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/T5Tokenizer.ipynb)
+
+最终提交仓库代码文件：
+
+[\_\_init\_\_.py]()
+
+[t5_tokenizer.py]()
+
+[test_t5_tokenizer.py]()
+
+
+对于提供的预训练模型，往往会有其对应的tokenizer进行搭配使用。以T5模型为例总共有5种size，其中每种都有对应的tokenizer。通过上文的`download_script`我们可以获得各个模型对应的`tokenizer.json`的链接
+
+|T5Model|tokenizer|
+|--|--|
+|small|https://huggingface.co/t5-small/resolve/main/tokenizer.json|
+|base|https://huggingface.co/t5-base/resolve/main/tokenizer.json|
+|large|https://huggingface.co/t5-large/resolve/main/tokenizer.json|
+|3b|https://huggingface.co/t5-3b/resolve/main/tokenizer.json|
+|11b|https://huggingface.co/t5-11b/resolve/main/tokenizer.json|
+
+## 基础迁移
+
+主要使用`tokenizers`中的`Tokenizer`，`models`来实现基本的`encode`和`decode`功能。代码如下：
+```python
+import os
+from mindnlp.configs import DEFAULT_ROOT
+from mindnlp.utils.download import cache_file
+from tokenizers import Tokenizer, models
+
+URL = {
+    "t5-small": "https://huggingface.co/t5-small/resolve/main/tokenizer.json",
+    "t5-base": "https://huggingface.co/t5-base/resolve/main/tokenizer.json",
+    "t5-large": "https://huggingface.co/t5-large/resolve/main/tokenizer.json",
+    "t5-3b": "https://huggingface.co/t5-3b/resolve/main/tokenizer.json",
+    "t5-11b": "https://huggingface.co/t5-11b/resolve/main/tokenizer.json"
+    
+}
+
+class T5Tokenizer():
+    def __init__(
+        self,
+        tokenizer_file=None,
+    ):
+        if tokenizer_file != None:
+            self._tokenizer = Tokenizer(models.Unigram()).from_file(tokenizer_file)
+
+    def __call__(self, text_input):
+        return super().__call__(text_input)
+
+    @classmethod
+    def from_pretrained(cls, size:str):
+        cache_dir = os.path.join(DEFAULT_ROOT, "tokenizers", size)
+        path, _ = cache_file(None, url=URL[size], cache_dir=cache_dir)
+        tokenizer = cls(tokenizer_file=str(path))
+        return tokenizer
+
+    def encode(self, text_input):
+        tokens = self._tokenizer.encode(text_input)
+        return tokens
+
+    def decode(self, ids: list):
+        return self.decode(ids)
+```
+
+其中通过huggingface的官方文档可以知道，T5Tokenizer是基于Unigram算法进行分词的，故在代码中加载的是`model.Unigram()`，在迁移时请注意原本的tokenizer使用的是什么分词器，如`BPE`之类的还需要加载对应的`spiece.model`等。
+
+这时候我们给出的测试代码如下，主要是将两个tokenizer进行对比：
+```python
+from mindnlp.transforms import T5Tokenizer
+from transformers import T5TokenizerFast
+
+pt_tokenizer = T5TokenizerFast.from_pretrained('t5-base')
+ms_tokenizer = T5Tokenizer.from_pretrained('t5-base')
+
+text = "Believing that faith can triumph over everything is in itself the greatest belief"
+
+print(pt_tokenizer.encode(text))
+print(ms_tokenizer.encode(text).ids)
+
+print(pt_tokenizer(text).attention_mask)
+print(ms_tokenizer.encode(text).attention_mask)
+
+print(pt_tokenizer.decode(pt_tokenizer.encode(text)))
+print(ms_tokenizer.decode(ms_tokenizer.encode(text).ids))
+```
+结果如下：
+```plain text
+[493, 1896, 3745, 24, 3251, 54, 20020, 147, 762, 19, 16, 1402, 8, 4016, 7750, 1]
+[493, 1896, 3745, 24, 3251, 54, 20020, 147, 762, 19, 16, 1402, 8, 4016, 7750, 1]
+[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+Believing that faith can triumph over everything is in itself the greatest belief</s>
+Believing that faith can triumph over everything is in itself the greatest belief
+```
+除了最后的结尾符`</s>`，其余保持一致。
+
+## 额外操作
+
+在基础操作之上，我们还需要将tokenizer进一步改写，使其能够符合`mindspore`的`map`等操作。主要操作：
+
+- 继承`PyTensorOperation`类
+- 引入`Implementation`类
+- 增加`execute_py`，`_execute_py`，`_convert_to_unicode`函数
+- 修改`__call__`函数
+
+修改后的代码如下：
+
+```python
+import os
+import numpy as np
+from tokenizers import Tokenizer, models
+from mindspore.dataset.transforms.transforms import PyTensorOperation
+from mindspore.dataset.text.transforms import Implementation
+from mindnlp.utils.download import cache_file
+from mindnlp.configs import DEFAULT_ROOT
+
+URL = {
+    "t5-small": "https://huggingface.co/t5-small/resolve/main/tokenizer.json",
+    "t5-base": "https://huggingface.co/t5-base/resolve/main/tokenizer.json",
+    "t5-large": "https://huggingface.co/t5-large/resolve/main/tokenizer.json",
+    "t5-3b": "https://huggingface.co/t5-3b/resolve/main/tokenizer.json",
+    "t5-11b": "https://huggingface.co/t5-11b/resolve/main/tokenizer.json"
+}
+
+class T5Tokenizer(PyTensorOperation):
+    """
+    Tokenizer used for Bert text process.
+    Args:
+        tokenizer_file (Str): The path of the tokenizer.json 
+    Examples:
+        >>> from mindspore.dataset import text
+        >>> from mindnlp.transforms import T5Tokenizer
+        >>> text = "Believing that faith can triumph over everything is in itself the greatest belief"
+        >>> tokenizer = T5Tokenizer.from_pretrained('t5-base')
+        >>> tokens = tokenizer.encode(text)
+    """
+    def __init__(
+        self,
+        tokenizer_file=None,
+    ):
+        super().__init__()
+        if tokenizer_file is not None:
+            self._tokenizer = Tokenizer(models.Unigram()).from_file(tokenizer_file)
+        self.implementation = Implementation.PY
+
+    def __call__(self, text_input):
+        if isinstance(text_input, str):
+            text_input = np.array(text_input)
+        elif not isinstance(text_input, np.ndarray):
+            raise TypeError(
+                f"Input should be a text line in 1-D NumPy format, got {type(text_input)}.")
+        return super().__call__(text_input)
+
+    @classmethod
+    def from_pretrained(cls, size:str):
+        """load T5Tokenizer from pretrained tokenizer.json"""
+        cache_dir = os.path.join(DEFAULT_ROOT, "tokenizers", size)
+        path, _ = cache_file(None, url=URL[size], cache_dir=cache_dir)
+        tokenizer = cls(tokenizer_file=str(path))
+        return tokenizer
+
+    def encode(self, text_input):
+        """encode function"""
+        tokens = self._tokenizer.encode(text_input)
+        return tokens
+
+    def decode(self, ids: list):
+        """decode function"""
+        return self._tokenizer.decode(ids)
+
+    def execute_py(self, text_input):
+        """
+        Execute method.
+        """
+        return self._execute_py(text_input)
+
+    def _execute_py(self, text_input):
+        """
+        Execute method.
+        """
+        text_input = self._convert_to_unicode(text_input)
+        tokens = self._tokenizer.encode(text_input)
+        return tokens.ids
+
+    def _convert_to_unicode(self, text_input):
+        """Converts `text` to Unicode (if it's not already), assuming utf-8 input."""
+        if isinstance(text_input, str):
+            return text_input
+        if isinstance(text_input, bytes):
+            return text_input.decode("utf-8", "ignore")
+        if isinstance(text_input, np.ndarray):
+            if text_input.dtype.type is np.bytes_:
+                text_input = np.char.decode(text_input, "utf-8")
+            return str(text_input)
+        raise ValueError(f"Unsupported string type: {type(text_input)}, {text_input.dtype}")
+```
+
+对应的，我们需要对修改后的tokenizer进行测试，测试代码如下：
+
+```python
+from mindnlp.transforms import T5Tokenizer
+from mindspore.dataset import GeneratorDataset
+from transformers import T5TokenizerFast
+
+pt_tokenizer = T5TokenizerFast.from_pretrained('t5-base')
+tokenizer = T5Tokenizer.from_pretrained('t5-base')
+texts = ['i make a small mistake when i\'m working!']
+test_dataset = GeneratorDataset(texts, 'text')
+test_dataset = test_dataset.map(operations=tokenizer)
+dataset_after = next(test_dataset.create_tuple_iterator())[0]
+
+print(pt_tokenizer.encode(texts[0]))
+print(dataset_after)
+```
+结果如下，运行成功且结果一致：
+```plain text
+[3, 23, 143, 3, 9, 422, 6202, 116, 3, 23, 31, 51, 464, 55, 1]
+[   3   23  143    3    9  422 6202  116    3   23   31   51  464   55
+    1]
+```
+
+## ut代码
+
+最后，对应于T5Tokenizer的ut测试代码如下：
+
+```python
+import unittest
+from mindspore.dataset import GeneratorDataset
+from mindnlp.transforms import T5Tokenizer
+class TestT5Tokenizer(unittest.TestCase):
+    r"""
+    Test T5Tokenizer
+    """
+    def test_t5_tokenizer(self):
+        """test T5Tokenizer based on t5-base"""
+        text = "Believing that faith can triumph over everything is in itself the greatest belief"
+        tokenizer = T5Tokenizer.from_pretrained('t5-base')
+        tokens = tokenizer.encode(text)
+        assert len(tokens.ids) == 16
+        assert len(tokens.attention_mask) == 16
+        assert text == tokenizer.decode(tokens.ids)
+
+    def test_t5_tokenizer_op(self):
+        """test T5Tokenizer based on t5-base"""
+        texts = ['i make a small mistake when i\'m working!']
+        test_dataset = GeneratorDataset(texts, 'text')
+        tokenizer = T5Tokenizer.from_pretrained('t5-base')
+        test_dataset = test_dataset.map(operations=tokenizer)
+        dataset_after = next(test_dataset.create_tuple_iterator())[0]
+        assert len(dataset_after) == 15
+```
