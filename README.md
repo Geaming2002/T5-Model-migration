@@ -9,22 +9,22 @@
 <!-- TOC -->
 
 - [T5-Model-migration](#t5-model-migration)
-- [模型迁移](#%E6%A8%A1%E5%9E%8B%E8%BF%81%E7%A7%BB)
-- [模型对齐](#%E6%A8%A1%E5%9E%8B%E5%AF%B9%E9%BD%90)
-    - [模块对齐](#%E6%A8%A1%E5%9D%97%E5%AF%B9%E9%BD%90)
-    - [整网对齐](#%E6%95%B4%E7%BD%91%E5%AF%B9%E9%BD%90)
-    - [预训练参数加载对齐](#%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E5%8A%A0%E8%BD%BD%E5%AF%B9%E9%BD%90)
-        - [预训练参数下载及转换为ckpt](#%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E4%B8%8B%E8%BD%BD%E5%8F%8A%E8%BD%AC%E6%8D%A2%E4%B8%BAckpt)
-            - [下载](#%E4%B8%8B%E8%BD%BD)
-            - [转换](#%E8%BD%AC%E6%8D%A2)
-        - [预训练参数加载并对齐](#%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E5%8A%A0%E8%BD%BD%E5%B9%B6%E5%AF%B9%E9%BD%90)
-            - [_1](#_1)
-            - [_2](#_2)
-        - [t5-small参数名称对比](#t5-small%E5%8F%82%E6%95%B0%E5%90%8D%E7%A7%B0%E5%AF%B9%E6%AF%94)
-- [Tokenizer迁移](#tokenizer%E8%BF%81%E7%A7%BB)
-    - [基础迁移](#%E5%9F%BA%E7%A1%80%E8%BF%81%E7%A7%BB)
-    - [额外操作](#%E9%A2%9D%E5%A4%96%E6%93%8D%E4%BD%9C)
-    - [ut代码](#ut%E4%BB%A3%E7%A0%81)
+- [模型迁移](#模型迁移)
+- [模型对齐](#模型对齐)
+  - [模块对齐](#模块对齐)
+  - [整网对齐](#整网对齐)
+  - [预训练参数加载对齐](#预训练参数加载对齐)
+    - [预训练参数下载及转换为ckpt](#预训练参数下载及转换为ckpt)
+      - [下载](#下载)
+      - [转换](#转换)
+    - [预训练参数加载并对齐](#预训练参数加载并对齐)
+      - [\_1](#_1)
+      - [\_2](#_2)
+    - [t5-small参数名称对比](#t5-small参数名称对比)
+- [Tokenizer迁移](#tokenizer迁移)
+  - [基础迁移](#基础迁移)
+  - [额外操作](#额外操作)
+  - [ut代码](#ut代码)
 
 <!-- /TOC -->
 
@@ -670,7 +670,7 @@ URL = {
 
 class T5Tokenizer(PyTensorOperation):
     """
-    Tokenizer used for Bert text process.
+    Tokenizer used for T5 text process.
     Args:
         tokenizer_file (Str): The path of the tokenizer.json 
     Examples:
