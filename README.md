@@ -26,7 +26,9 @@
   - [额外操作](#额外操作)
   - [ut代码](#ut代码)
 - [ChatYuan转换对齐代码](#chatyuan转换对齐代码)
+- [ChatYuan调用代码（对齐hf）](#chatyuan调用代码对齐hf)
 
+<!-- /TOC -->
 <!-- /TOC -->
 <!-- /TOC -->
 
@@ -806,3 +808,37 @@ class TestT5Tokenizer(unittest.TestCase):
 - [ChatYuan_mindspore.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/ChatYuan_mindspore.ipynb)
 
 - [ChatYuan_pytorch.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/ChatYuan_pytorch.ipynb)
+
+# ChatYuan调用代码（对齐hf）
+```python
+import os
+import mindspore
+from mindnlp.transformers import T5ForConditionalGeneration, ChatYuanTokenizer
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+
+def preprocess(text):
+    text = text.replace("\n", "\\n").replace("\t", "\\t")
+    return text
+
+def postprocess(text):
+    return text.replace("\\n", "\n").replace("\\t", "\t").replace('%20','  ')
+
+text = "美国的首都是哪座城市"
+text = f"用户：{text}\n小元： "
+text = text.strip()
+text = preprocess(text)
+
+tokenizer = ChatYuanTokenizer.from_pretrained("ChatYuan-large-v2")
+model = T5ForConditionalGeneration.from_pretrained("ChatYuan-large-v2")
+
+encoding = tokenizer(text)
+encoding = mindspore.Tensor(encoding).unsqueeze(dim=0)
+
+outputs = model.generate(encoding, output_scores=False, max_new_tokens=1024, num_beams=1, length_penalty=0.6)
+
+out_text = tokenizer.decode(outputs[0].asnumpy())
+
+print(out_text)
+# 美国的首都是华盛顿特区。
+```
