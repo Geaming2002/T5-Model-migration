@@ -25,7 +25,9 @@
   - [基础迁移](#基础迁移)
   - [额外操作](#额外操作)
   - [ut代码](#ut代码)
+- [ChatYuan转换对齐代码](#chatyuan转换对齐代码)
 
+<!-- /TOC -->
 <!-- /TOC -->
 
 # 模型迁移
@@ -237,6 +239,8 @@ wget https://huggingface.co/t5-small/resolve/main/pytorch_model.bin -P /home/dat
 -> [T5Model预训练参数转换.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/T5Model%E9%A2%84%E8%AE%AD%E7%BB%83%E5%8F%82%E6%95%B0%E8%BD%AC%E6%8D%A2.ipynb)
 
 下载好相关文件后，因为使用的深度学习框架的差异，我们需要将pytorch_model.bin转换为ckpt格式。在这里以T5-small为例。首先我们将下载好的文件加载进原T5Model。然后分别打印出两个T5Model模型的参数名称并进行对比，查看哪些参数名称需要进行替换。文末附有t5-small的参数名称对比表格。
+
+这里MindSpore提供了转换[troubleshooter](https://gitee.com/mindspore/toolkits/tree/master/troubleshooter)，可以实现自动转换。但是对于某些模型，自动转换后加载权重文件可能不能满足精度对齐（个人使用情况是成功转换了一个模型，还有一个模型权重是自动转换后精度对不齐手动写的转换逻辑）。
 
 指定相关文件路径
 
@@ -795,3 +799,10 @@ class TestT5Tokenizer(unittest.TestCase):
         dataset_after = next(test_dataset.create_tuple_iterator())[0]
         assert len(dataset_after) == 15
 ```
+# ChatYuan转换对齐代码
+
+为了与hf对齐，ChatYuan这里主要涉及的是tokenizer和model的对齐，最终达到端对端的对齐效果。
+
+- [ChatYuan_mindspore.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/ChatYuan_mindspore.ipynb)
+
+- [ChatYuan_pytorch.ipynb](https://github.com/Geaming-CHN/T5-Model-migration/blob/main/code/ChatYuan_pytorch.ipynb)
